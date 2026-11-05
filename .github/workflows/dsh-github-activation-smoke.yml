@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 12
     env:
       DSH_TELEMETRY_DISABLED: '1'
-      DSH_HOME: ${{ runner.temp }}/dsh-smoke
+      DSH_HOME: /tmp/dsh-smoke
       CI: 'true'
     steps:
       - name: Set up Node 24
