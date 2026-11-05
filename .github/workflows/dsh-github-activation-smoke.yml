@@ -1,0 +1,70 @@
+# Keyless, short-lived DeepSeek Harness launch test.
+# Does not use paid model APIs, deploy, publish, or expose Web UI.
+name: DeepSeek Harness GitHub activation smoke
+
+on:
+  push:
+    branches:
+      - feature/dsh-github-activation-20261105
+    paths:
+      - .github/workflows/dsh-github-activation-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-activation-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      DSH_TELEMETRY_DISABLED: '1'
+      DSH_HOME: ${{ runner.temp }}/dsh-smoke
+      CI: 'true'
+    steps:
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Check official pinned CLI
+        run: |
+          node --version
+          npm --version
+          npx --yes @deepseek-ai/dsh@0.2.2-rc.1 --help
+
+      - name: Boot and probe local-only Web UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          logfile="${RUNNER_TEMP}/dsh-web.log"
+          npx --yes @deepseek-ai/dsh@0.2.2-rc.1 web --no-open --port 3080 > "$logfile" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          reachable=0
+          for attempt in $(seq 1 60); do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:3080/ || true)"
+            case "$status" in
+              200|301|302|303|307|308|401|403)
+                reachable=1
+                echo "DeepSeek Harness HTTP listener responded (status $status)."
+                break
+                ;;
+            esac
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "DeepSeek Harness exited before becoming reachable."
+              break
+            fi
+            sleep 2
+          done
+          if [ "$reachable" -ne 1 ]; then
+            echo "Web UI startup smoke failed; sanitized last logs:"
+            tail -n 30 "$logfile" | sed -E 's/(token=)[^&[:space:]]+/\1[REDACTED]/g'
+            exit 1
+          fi
+          echo "PASS: Keyless, loopback-only Web UI startup. No model query executed."
